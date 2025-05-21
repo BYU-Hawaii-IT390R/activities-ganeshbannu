@@ -1,0 +1,53 @@
+Activity-01: Recursive Directory Scanner
+
+This assignment helped me learn how to write Python scripts to work with folders and files. I created two scripts for this project:
+
+setup_files.py: This sets up a fake test folder called test_root with some subfolders and .txt files in them.
+
+scan.py: This script goes through all those folders, finds .txt files, shows each one’s size, and then gives a summary at the end.
+
+Enhancement I Chose:
+
+I chose Enhancement #2: Group files by folder summary.
+At the end of the script’s output, it tells me how many .txt files are in each folder and how big they are in total.
+
+How to Run My Script:
+
+First go to the folder where the files are:
+
+cd Activity-01
+Run the setup script to create test folders and files:
+
+py setup_files.py
+Then run the scanner:
+
+py scan.py test_root
+
+Sample Output:
+
+Scanning: C:\...\test_root
+Found 20 text files:
+
+File                                     Size (KB)
+----------------------------------------------------
+docs/file0.txt                               0.1
+docs/file1.txt                               0.1
+...
+logs/archive/file4.txt                       0.1
+----------------------------------------------------
+Total size: 19.5 KB
+
+Summary:
+  docs/              — 5 files, 4.9 KB
+  logs/              — 5 files, 4.9 KB
+  docs/subfolder/    — 5 files, 4.9 KB
+  logs/archive/      — 5 files, 4.9 KB
+What I Learned:
+
+How to create folders and files using Python
+
+How to scan through folders using pathlib
+
+How to calculate file sizes
+
+How to group and summarize info with dictionaries
