@@ -1,53 +1,38 @@
-"""Windows Admin Toolkit – reference solution
+"""Windows Admin Toolkit – extended version
 -------------------------------------------------
-Requires **pywin32** (``pip install pywin32``) and works on Win10/11.
+Requires *pywin32* (`pip install pywin32`) and works on Win10/11.
 
-Implemented tasks (select with ``--task``):
+Implemented tasks (select with `--task`):
 
-* **win-events**       – failed & successful logons from the Security log
-* **win-pkgs**         – list installed software (DisplayName + Version)
-* **win-services**     – check service states; auto‑start if ``--fix`` flag supplied
-
-Example runs
-------------
-```powershell
-# Show IPs with ≥ 3 failed logons in last 12 h
-python analyze_windows.py --task win-events --hours 12 --min-count 3
-
-# Dump installed packages to a CSV
-python analyze_windows.py --task win-pkgs --csv pkgs.csv
-
-# Ensure Spooler & Windows Update are running (start them if stopped)
-python analyze_windows.py --task win-services --watch Spooler wuauserv --fix
-```
+* win-events      – failed & successful logons from the Security log
+* win-pkgs        – list installed software (DisplayName + Version)
+* win-services    – check service states; auto-start if `--fix` flag supplied
+* win-startup     – list programs that auto-run on startup
+* win-tasks       – list scheduled tasks excluding Microsoft ones
+* win-firewall    – detect risky inbound firewall rules
 """
 
 from __future__ import annotations
 import argparse
 import collections
 import csv
-import datetime as _dt
-import io
 import re
 import subprocess
 import sys
-from pathlib import Path
+from io import StringIO
 from xml.etree import ElementTree as ET
 
 try:
-    import win32evtlog  # type: ignore
-    import winreg  # std‑lib but Windows‑only
+    import win32evtlog
+    import winreg
 except ImportError:
     sys.stderr.write("pywin32 required → pip install pywin32\n")
     sys.exit(1)
 
-# ── Constants / regex ──────────────────────────────────────────────────────
 SECURITY_CHANNEL = "Security"
-EVENT_FAILED = "4625"   # failed logon
-EVENT_SUCCESS = "4624"  # successful logon
+EVENT_FAILED = "4625"
+EVENT_SUCCESS = "4624"
 IP_RE = re.compile(r"(?:\d{1,3}\.){3}\d{1,3}")
-
-# ── Utility: pretty Counter table ──────────────────────────────────────────
 
 def _print_counter(counter: dict, h1: str, h2: str):
     if not counter:
@@ -60,10 +45,6 @@ def _print_counter(counter: dict, h1: str, h2: str):
         print(f"{k:<{width}} {v:>8}")
     print()
 
-# ══════════════════════════════════════════════════════════════════════════
-# Task 1: Event‑Log triage (win-events)
-# ══════════════════════════════════════════════════════════════════════════
-
 def _query_security_xml(hours_back: int):
     delta_sec = hours_back * 3600
     q = (
@@ -72,9 +53,9 @@ def _query_security_xml(hours_back: int):
     )
     try:
         h = win32evtlog.EvtQuery(SECURITY_CHANNEL, win32evtlog.EvtQueryReverseDirection, q)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if getattr(e, "winerror", None) == 5:
-            sys.exit("❌ Access denied – run as Administrator or add your account to *Event Log Readers* group.")
+            sys.exit("❌ Access denied – run as Administrator or add your account to Event Log Readers group.")
         raise
     while True:
         try:
@@ -82,7 +63,6 @@ def _query_security_xml(hours_back: int):
         except IndexError:
             break
         yield win32evtlog.EvtRender(ev, win32evtlog.EvtRenderEventXml)
-
 
 def _parse_event(xml_str: str):
     root = ET.fromstring(xml_str)
@@ -96,10 +76,9 @@ def _parse_event(xml_str: str):
             ip = m.group()
     return eid, user, ip
 
-
 def win_events(hours_back: int, min_count: int):
     failed = collections.Counter()
-    success = collections.defaultdict(set)  # user → {ip,…}
+    success = collections.defaultdict(set)
     for xml_str in _query_security_xml(hours_back):
         eid, user, ip = _parse_event(xml_str)
         if eid == EVENT_FAILED and ip != "?":
@@ -108,7 +87,7 @@ def win_events(hours_back: int, min_count: int):
             success[user].add(ip)
 
     print(f"\n❌ Failed logons ≥{min_count} (last {hours_back}h)")
-    _print_counter({ip: c for ip, c in failed.items() if c >= min_count}, "Source IP", "Count")
+    _print_counter({ip: c for ip, c in failed.items() if c >= min_count}, "Source IP", "Count")
 
     print(f"✅ Successful logons ≥{min_count} IPs (last {hours_back}h)")
     succ = {u: ips for u, ips in success.items() if len(ips) >= min_count}
@@ -119,16 +98,11 @@ def win_events(hours_back: int, min_count: int):
         print(f"{user:<{width}} {len(ips):>8}")
     print()
 
-# ══════════════════════════════════════════════════════════════════════════
-# Task 2: Installed software audit (win-pkgs)
-# ══════════════════════════════════════════════════════════════════════════
-
-UNINSTALL_PATHS = [
-    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-]
-
 def win_pkgs(csv_path: str | None):
+    UNINSTALL_PATHS = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
     rows: list[tuple[str, str]] = []
     for root, path in UNINSTALL_PATHS:
         try:
@@ -155,21 +129,15 @@ def win_pkgs(csv_path: str | None):
             csv.writer(f).writerows(rows)
         print(f"📑 CSV exported → {csv_path}\n")
 
-# ══════════════════════════════════════════════════════════════════════════
-# Task 3: Service status checker (win-services)
-# ══════════════════════════════════════════════════════════════════════════
-
-COLOR_OK = "\033[92m"  # green
-COLOR_BAD = "\033[91m"  # red
-COLOR_RESET = "\033[0m"
-
-
-def _service_state(name: str) -> str:
-    out = subprocess.check_output(["sc", "query", name], text=True, stderr=subprocess.STDOUT)
-    return "RUNNING" if "RUNNING" in out else "STOPPED"
-
-
 def win_services(watch: list[str], auto_fix: bool):
+    COLOR_OK = "\033[92m"
+    COLOR_BAD = "\033[91m"
+    COLOR_RESET = "\033[0m"
+
+    def _service_state(name: str) -> str:
+        out = subprocess.check_output(["sc", "query", name], text=True, stderr=subprocess.STDOUT)
+        return "RUNNING" if "RUNNING" in out else "STOPPED"
+
     if not watch:
         watch = ["Spooler", "wuauserv"]
     print("\n🩺 Service status")
@@ -179,46 +147,91 @@ def win_services(watch: list[str], auto_fix: bool):
         colour = COLOR_OK if ok else COLOR_BAD
         print(f"{svc:<20} {colour}{state}{COLOR_RESET}")
         if not ok and auto_fix:
-            print(f"  ↳ attempting to start {svc} …", end="")
+            print(f"  ↳ attempting to start {svc} …", end=" ")
             subprocess.call(["sc", "start", svc], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             state = _service_state(svc)
             print("done" if state == "RUNNING" else "failed")
     print()
 
-# ══════════════════════════════════════════════════════════════════════════
-# CLI
-# ══════════════════════════════════════════════════════════════════════════
+def win_startup():
+    print("\n🚀 Startup Programs (HKCU\\...\\Run)")
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run")
+    except Exception as e:
+        print("❌ Unable to read registry:", e)
+        return
+
+    print(f"{'Name':<30} Command")
+    print("-" * 60)
+    i = 0
+    while True:
+        try:
+            name, val, _ = winreg.EnumValue(key, i)
+            print(f"{name:<30} {val}")
+            i += 1
+        except OSError:
+            break
+
+def win_tasks():
+    print("\n🕒 Non-Microsoft Scheduled Tasks")
+    try:
+        result = subprocess.run(["schtasks", "/query", "/fo", "CSV", "/v"],
+                                capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print("❌ Failed to query tasks:", e)
+        return
+
+    rows = list(csv.DictReader(StringIO(result.stdout)))
+    filtered = [r for r in rows if r.get("TaskName") and "Microsoft" not in r["TaskName"]]
+    print(f"{'Task Name':<40} Next Run Time")
+    print("-" * 60)
+    for row in filtered:
+        print(f"{row['TaskName']:<40} {row['Next Run Time']}")
+
+def win_firewall():
+    print("\n🔥 Inbound Firewall Rules Allowing All IPs")
+    try:
+        result = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", "name=all"],
+                                capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print("❌ Failed to get firewall rules:", e)
+        return
+
+    rules = result.stdout.split("-------------------------------------------------------------------")
+    risky = [r for r in rules if "Direction: In" in r and "RemoteIP: Any" in r]
+    for rule in risky:
+        name_match = re.search(r"Rule Name:\s*(.+)", rule)
+        print(f"🔓 {name_match.group(1)}" if name_match else "Unnamed rule")
 
 def main():
-    p = argparse.ArgumentParser(description="Windows admin toolkit (IT 390R)")
-    p.add_argument("--task", required=True,
-                   choices=["win-events", "win-pkgs", "win-services"],
-                   help="Which analysis to run")
-
-    # win-events options
+    p = argparse.ArgumentParser(description="Windows admin toolkit (IT 390R)")
+    p.add_argument("--task", required=True, choices=[
+        "win-events", "win-pkgs", "win-services", "win-startup", "win-tasks", "win-firewall"
+    ])
     p.add_argument("--hours", type=int, default=24,
-                   help="Look‑back window for Security log (win-events)")
+                   help="Look-back window for Security log (win-events)")
     p.add_argument("--min-count", type=int, default=1,
                    help="Min occurrences before reporting (win-events)")
-
-    # win-pkgs options
     p.add_argument("--csv", metavar="FILE", default=None,
                    help="Export installed-software list to CSV (win-pkgs)")
-
-    # win-services options
     p.add_argument("--watch", nargs="*", metavar="SVC", default=[],
                    help="Service names to check (win-services)")
     p.add_argument("--fix", action="store_true",
                    help="Attempt to start stopped services (win-services)")
 
     args = p.parse_args()
-
     if args.task == "win-events":
         win_events(args.hours, args.min_count)
     elif args.task == "win-pkgs":
         win_pkgs(args.csv)
     elif args.task == "win-services":
         win_services(args.watch, args.fix)
+    elif args.task == "win-startup":
+        win_startup()
+    elif args.task == "win-tasks":
+        win_tasks()
+    elif args.task == "win-firewall":
+        win_firewall()
 
 if __name__ == "__main__":
     main()

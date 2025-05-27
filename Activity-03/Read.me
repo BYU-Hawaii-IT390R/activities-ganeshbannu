@@ -1,0 +1,25 @@
+This project is a customized enhancement of the analyze_windows.py script, developed for the IT 390R Windows Admin Toolkit assignment.
+Written in Python, the script is designed to run on a Windows machine and helps automate common system administration tasks by pulling live system data—such as event logs, installed applications, and service statuses—and presenting it clearly in the command line.
+
+The original script came with several built-in features:
+
+The win-events task checks the Windows Security log for both failed and successful login attempts.
+
+The win-pkgs task lists installed software and supports exporting the results to a CSV file.
+
+The win-services task checks whether specified services are running, with an option to restart any that are stopped.
+
+For this assignment, I extended the toolkit by implementing three new tasks:
+
+win-startup reads from the Windows Registry to list all programs set to auto-run on system startup.
+
+win-tasks displays scheduled tasks, excluding those created by Microsoft, making it easier to spot user-created or third-party jobs.
+
+win-firewall analyzes inbound firewall rules and flags any that allow traffic from all IP addresses—a potential security vulnerability if left unchecked.
+
+All tasks are run from the command line using flags like --task win-startup and require no additional input files.
+The only setup required is installing Python 3.10+ along with the pywin32 and colorama packages. Running the script with Administrator privileges in PowerShell is necessary to access system logs, services, and the registry.
+
+To validate functionality, I included screenshots of each new task’s output—win-startup, win-tasks, and win-firewall—located in the screenshots/ directory alongside the script.
+
+To develop and refine the logic for more complex features—such as parsing scheduled task output and filtering firewall rules with regex—I used ChatGPT to generate and troubleshoot initial code. All final code was manually reviewed and tested to ensure reliable performance and proper error handling
